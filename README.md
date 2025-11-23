@@ -8,17 +8,7 @@ This repository contains a ready-to-import n8n workflow, a Supabase schema, and 
 - Notifications: n8n posts to Slack (and optionally Discord)
 - Logging: n8n writes deployment metadata to Supabase for analytics
 
-## Architecture
 
-```mermaid
-flowchart LR
-  A[GitHub Push to main] -->|Vercel Git Integration| B[Vercel Deployment]
-  B -->|Vercel Webhook (deployment.ready/error)| C[n8n Webhook]
-  C -->|Parse + Transform| D[Slack #deployments]
-  C -->|Optional| E[Discord #dev-updates]
-  C -->|Insert| F[(Supabase Postgres)]
-
-```
 
 ## Deliverables in this repo
 - `n8n_workflow.json`: Importable n8n workflow implementing the logic
