@@ -1,0 +1,334 @@
+{
+  "name": "Vercel → n8n → Slack/Discord → Supabase (Deploy Notifications)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "vercel/deploy",
+        "responseMode": "onReceived",
+        "responseData": "json",
+        "options": {
+          "responseCode": 200,
+          "responseData": "{\n  \"ok\": true\n}"
+        }
+      },
+      "id": "Webhook_Vercel",
+      "name": "Vercel Deployment Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Normalize Vercel webhook payload into a consistent shape\n// Vercel sends events like deployment.created, deployment.ready, deployment.error\n// See: https://vercel.com/docs/integrations/webhooks/event-payloads#deployment-events\nconst body = items[0].json;\n// Vercel sometimes nests under .payload or .deployment; support both\nconst payload = body.payload || body.deployment || body;\nconst event = body.type || body.event || body.action || 'deployment';\n// readyState values: INITIALIZING, BUILDING, READY, ERROR, CANCELED\nconst readyState = payload.readyState || payload.state || body.readyState || '';\nconst statusMap = {\n  READY: 'success',\n  ERROR: 'failure',\n  CANCELED: 'failure',\n  BUILDING: 'building',\n  INITIALIZING: 'building'\n};\nconst status = statusMap[readyState] || (event.includes('error') ? 'failure' : (event.includes('ready') ? 'success' : 'building'));\nconst url = (payload.url || payload.targetUrl || payload.readyUrl || '').toString().startsWith('http') ? (payload.url || payload.targetUrl || payload.readyUrl) : (payload.url ? `https://${payload.url}` : (payload.targetUrl || payload.readyUrl || ''));\nconst project = payload.name || payload.project || payload.projectId || body.project || '';\nconst commitSha = payload.gitSource?.commitSha || payload.meta?.githubCommitSha || payload.commit || body.commitId || '';\nconst commitMessage = payload.gitSource?.commitMessage || payload.meta?.githubCommitMessage || '';\nconst branch = payload.gitSource?.ref || payload.meta?.githubCommitRef || payload.branch || body.branch || '';\nconst deploymentId = payload.id || body.id || '';\nconst createdAt = payload.createdAt || Date.now();\nconst error = payload.error || body.error || null;\nreturn [{ json: {\n  normalized: {\n    status,\n    vercelStatus: readyState,\n    event,\n    url,\n    project,\n    commitSha,\n    commitMessage,\n    branch,\n    deploymentId,\n    createdAt,\n    error\n  },\n  raw: body\n}}];"
+      },
+      "id": "Fn_Parse",
+      "name": "Parse Vercel Payload",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "values": [
+                  {
+                    "condition": {
+                      "operation": "equal",
+                      "value2": "success"
+                    },
+                    "value1": "={{$json[\"normalized\"].status}}"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "id": "If_Success",
+      "name": "Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        700,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "passThrough",
+        "options": {
+          "setAllData": true
+        }
+      },
+      "id": "Merge_Result",
+      "name": "Merge Result",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2,
+      "position": [
+        1380,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://hooks.slack.com/services/YOUR_SLACK_WEBHOOK_HERE",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "={\n  \"text\": `✅ Deployment succeeded for *${$json.normalized.project || 'project'}* on branch *${$json.normalized.branch || 'main'}*\\n<${$json.normalized.url}|Open live app>\\ncommit: ${$json.normalized.commitSha || 'n/a'}\\nvercel: ${$json.normalized.deploymentId}`\n}"
+      },
+      "id": "Slack_Success",
+      "name": "Slack: Success",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        940,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://hooks.slack.com/services/YOUR_SLACK_WEBHOOK_HERE",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "={\n  \"text\": `🚨 Deployment failed for *${$json.normalized.project || 'project'}* on branch *${$json.normalized.branch || 'main'}*\\ncommit: ${$json.normalized.commitSha || 'n/a'}\\nstatus: ${$json.normalized.vercelStatus}\\nerror: ${$json.normalized.error ? (typeof $json.normalized.error === 'string' ? $json.normalized.error : JSON.stringify($json.normalized.error)) : 'unknown'}`\n}"
+      },
+      "id": "Slack_Failure",
+      "name": "Slack: Failure",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        940,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "json",
+        "json": "={\n  \"content\": `✅ Deployment succeeded for ${$json.normalized.project || 'project'} on ${$json.normalized.branch || 'main'} | ${$json.normalized.url}`\n}"
+      },
+      "id": "Discord_Success_Payload",
+      "name": "Discord Payload (Success)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "json",
+        "json": "={\n  \"content\": `🚨 Deployment failed for ${$json.normalized.project || 'project'} on ${$json.normalized.branch || 'main'} | status=${$json.normalized.vercelStatus}`\n}"
+      },
+      "id": "Discord_Failure_Payload",
+      "name": "Discord Payload (Failure)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discord.com/api/webhooks/YOUR_DISCORD_WEBHOOK_HERE",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "={{ $json }}"
+      },
+      "id": "Discord_Success",
+      "name": "Discord: Success (optional)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        1340,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://discord.com/api/webhooks/YOUR_DISCORD_WEBHOOK_HERE",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "={{ $json }}"
+      },
+      "id": "Discord_Failure",
+      "name": "Discord: Failure (optional)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        1340,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "deployments_log",
+        "columns": [
+          "timestamp",
+          "commit_hash",
+          "status",
+          "url",
+          "project",
+          "branch",
+          "deployment_id",
+          "raw_payload"
+        ],
+        "values": "={{ [{ timestamp: new Date($json.normalized.createdAt).toISOString(), commit_hash: $json.normalized.commitSha, status: $json.normalized.status, url: $json.normalized.url, project: $json.normalized.project, branch: $json.normalized.branch, deployment_id: $json.normalized.deploymentId, raw_payload: $json.raw }] }}"
+      },
+      "id": "Supabase_Insert",
+      "name": "Supabase: Log Deployment",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        1160,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "YOUR_N8N_CREDENTIAL_ID",
+          "name": "Supabase Postgres (configure in n8n)"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Vercel Deployment Webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse Vercel Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Vercel Payload": {
+      "main": [
+        [
+          {
+            "node": "Success?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Supabase: Log Deployment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Success?": {
+      "main": [
+        [
+          {
+            "node": "Slack: Success",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Discord Payload (Success)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Slack: Failure",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Discord Payload (Failure)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discord Payload (Success)": {
+      "main": [
+        [
+          {
+            "node": "Discord: Success (optional)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discord Payload (Failure)": {
+      "main": [
+        [
+          {
+            "node": "Discord: Failure (optional)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack: Success": {
+      "main": [
+        [
+          {
+            "node": "Merge Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack: Failure": {
+      "main": [
+        [
+          {
+            "node": "Merge Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase: Log Deployment": {
+      "main": [
+        [
+          {
+            "node": "Merge Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "staticData": null,
+  "meta": {
+    "templateCredsSetup": true
+  },
+  "settings": {},
+  "tags": [
+    {
+      "name": "deploy"
+    }
+  ]
+}
