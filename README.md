@@ -16,7 +16,8 @@ flowchart LR
   B -->|Vercel Webhook (deployment.ready/error)| C[n8n Webhook]
   C -->|Parse + Transform| D[Slack #deployments]
   C -->|Optional| E[Discord #dev-updates]
-  C -->|Insert| F[(Supabase\nPostgres)]
+  C -->|Insert| F[(Supabase Postgres)]
+
 ```
 
 ## Deliverables in this repo
